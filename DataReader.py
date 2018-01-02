@@ -325,11 +325,13 @@ class DataReaderChallangePolimi2017:
         self._buildTestURM_csr()
         return
 
+    
     def _recommend(self, targetPlaylist, n_rec=5):
         scores = (self.r[targetPlaylist, :]).toarray().ravel()
         ranking, scores = self._filter_seen(targetPlaylist, scores, n_rec)
         return ranking, scores
 
+    
     def _MAP(self, recommended_items, relevant_items):
         is_relevant = np.in1d(recommended_items, relevant_items, assume_unique=True)
         # Cumulative sum: precision at 1, at 2, at 3 ...
@@ -337,6 +339,7 @@ class DataReaderChallangePolimi2017:
         map_score = np.sum(p_at_k) / np.min([relevant_items.shape[0], is_relevant.shape[0]])
         return map_score
 
+    
     def _filter_seen(self, playlist_id, scores, n_rec=5):
         ranking = np.array([])
         k = 70  # adjust this value
@@ -358,28 +361,35 @@ class DataReaderChallangePolimi2017:
         #    print ("re-sample argpartition: " + str(count) + " time")
         return ranking[:n_rec],r_scores
 
+    
     def getURM_csr(self):
         return self.urm
 
+    
     def getTestURM_csr(self):
         if self.test[0].shape[0] == 0:
             print("--- !!!Warning!!! There is not test set here! ---")
         return self.urm_test
 
+    
     def getTrain(self):
         return self.train
 
+    
     def getTest(self):
         if self.test[0].shape[0] == 0:
             print("--- !!!Warning!!! There is not test set here! ---")
         return self.test
 
+    
     def getTargetPlaylists(self):
         return self.target_playlists
 
+    
     def getTargetTracks(self):
         return self.target_tracks
 
+    
     def getICM_csr(self, artists=False, albums=False, tags=False):
         tracks = []
         attributes = []
@@ -411,6 +421,7 @@ class DataReaderChallangePolimi2017:
         '''
         return icm
 
+    
     def getUCM_csr(self, artists = False, albums = False):
         n_playlists = self.n_playlists
         n_attributes = self.n_attributes
@@ -485,8 +496,7 @@ class DataReaderChallangePolimi2017:
         n_owners = max(owners[1]) +1
         return owners, n_owners
     
-    
-    
+        
     def getTitlesUCM_csr(self):
         #titles ucm, since the max id is not too big, we don't use a dict for each word of titles
         df = self._readPlaylists()
@@ -569,6 +579,7 @@ class DataReaderChallangePolimi2017:
         print("Done")
         return
 
+    
     def reduceRM(self, r):
         n_playlist = self.n_playlists
         n_track = self.n_tracks
@@ -585,10 +596,12 @@ class DataReaderChallangePolimi2017:
         r_cut = ((r_cut.T) * diag_p).T
         return r_cut.tocsr()
 
+    
     def normalizeRMCountURM_inplace(self,r):
         inplace_row_scale(r, self.norm_vect_urm)
         return r
 
+    
     def evaluateMAP(self, r, n_rec=5, allmaps = False, verbose=True):
         targetPlaylists = self.target_playlists
         # cut the matrix
@@ -612,6 +625,7 @@ class DataReaderChallangePolimi2017:
         if allmaps == True: return allmap, num_eval
         return cumulative_MAP
 
+    
     def evaluateMAPfromRecommendations(self, allRecs,n_rec = 5, verbose = True):
         targetPlaylists = self.target_playlists
         cumulative_MAP = 0.0
@@ -661,24 +675,8 @@ class DataReaderChallangePolimi2017:
         loader = np.load(filename)
         return sp.csr_matrix((loader['data'], loader['indices'], loader['indptr']),shape = loader['shape'])
     
-    def knn_csr(self,r, k, verbose=True):
-        if verbose: print ("!!!Care, maybe this function is broken!!!")
-        data, rows, cols = [], [], []
-        for i_row in range(r.shape[0]):
-            row = r[i_row, :]
-            idxs = np.array(row.indices)
-            values = np.array(row.data)
-            k_top = min(k, values.shape[0])
-            topk_idxs_values = np.argpartition(values, -(k_top))[-(k_top):]
-            n = topk_idxs_values.shape[0]
-            # create incrementally the similarity matrix
-            data.extend(values[topk_idxs_values])
-            cols.extend(idxs[topk_idxs_values])
-            rows.extend(np.full(n, i_row))
-        s = sp.csr_matrix((data, (rows, cols)), shape=(r.shape[0],r.shape[1]), dtype=np.float32)
-        return s.tocsr()
     
-    def bm25_row(self, X, K1=100, B=0.8):
+    def bm25_row(self, X, K1=1.2, B=0.75):
         #Weighs each row of a sparse matrix by OkapiBM25 weighting
         # calculate idf per term (user)
         X = sp.coo_matrix(X)
@@ -694,6 +692,32 @@ class DataReaderChallangePolimi2017:
         X.data = X.data * (K1 + 1.0) / (K1 * length_norm[X.row] + X.data) * idf[X.col]
         return X.tocsr()
     
+    
+    def bm25_col(self, X, K1=1.2, B=0.75):
+        X = X.T
+        X = self.bm25_row(X,K1,B)
+        X = X.T
+        return X.tocsr()
+    
+    
+    def bm25inverse_row(self, X, K1=1.2, B=0.75):
+        #Weighs each row of a sparse matrix by OkapiBM25 weighting
+        # calculate idf per term (user)
+        X = sp.coo_matrix(X)
+        N = float(X.shape[0])
+        idf = log(N / (1 + bincount(X.col)))
+        
+        # calculate length_norm per document (artist)
+        row_sums = np.ravel(X.sum(axis=1))
+        average_length = row_sums.mean()
+        length_norm = (1.0 - B) + B * row_sums / average_length
+        
+        # weight matrix rows by bm25
+        X.data = X.data * (K1 + 1.0) / (K1 * length_norm[X.row] + X.data) * idf[X.col]
+        X.data = 1/X.data
+        return X.tocsr()
+
+    
     def tfidf_row(self, X):
         #TFIDF each row of a sparse amtrix
         X = sp.coo_matrix(X)
@@ -705,13 +729,95 @@ class DataReaderChallangePolimi2017:
         # apply TF-IDF adjustment
         X.data = sqrt(X.data) * idf[X.col]
         return X.tocsr()
+    
+    
+    def tfidf_col(self, X):
+        X = X.T
+        X = self.tfidf_row(X)
+        X = X.T
+        return X.tocsr()
 
+    
+    def knn_fast1(self,m,k=100,verbose=True):
+        print("!!!WARNING!!! maybe something is broken in this function")
+        data, rows, cols = [], [], []
+        sim = (m * m.T).tocsr()
+        for i_row in range(sim.shape[0]):
+            if i_row%25000==0:
+                print i_row
+            row = sim[i_row, :]
+            idxs = np.array(row.indices)
+            values = np.array(row.data)
+            k_top = min(k, values.shape[0])
+            #topk_idxs_values = np.argpartition(values, -(k_top))[-(k_top):]
+            topk_idxs_values = np.argsort(-values)[-(k_top):]
+            n = topk_idxs_values.shape[0]
+            # create incrementally the similarity matrix
+            data.extend(values[topk_idxs_values])
+            cols.extend(idxs[topk_idxs_values])
+            rows.extend(np.full(n, i_row))
+        sim = sp.csr_matrix((data, (rows, cols)), shape=(sim.shape[0], sim.shape[0]), dtype=np.float32)
+        return sim
+    
+    
+    def knn_fast2(self,m,k=100,verbose=True):
+        print("!!!WARNING!!! maybe something is broken in this function")
+        data, rows, cols = [], [], []
+        m = m.tocsr()
+        m_t = m.copy().T.tocsc()
+        for i_row in range(m.shape[0]):
+            if i_row%25000==0:
+                print i_row
+            row = m[i_row, :]*m_t
+            idxs = np.array(row.indices)
+            values = np.array(row.data)
+            k_top = min(k, values.shape[0])
+            #topk_idxs_values = np.argpartition(values, -(k_top))[-(k_top):]
+            topk_idxs_values = np.argsort(-values)[-(k_top):]
+            n = topk_idxs_values.shape[0]
+            # create incrementally the similarity matrix
+            data.extend(values[topk_idxs_values])
+            cols.extend(idxs[topk_idxs_values])
+            rows.extend(np.full(n, i_row))
+        sim = sp.csr_matrix((data, (rows, cols)), shape=(m.shape[0], m.shape[0]), dtype=np.float32)
+        return sim
+    
+    
+    def knn_slow1(self,m,k=100,verbose=True):
+        data, rows, cols = [], [], []
+        m = m.tocsr()
+        sim = (m * m.T).tocsr()
+        for i_row in range(m.shape[0]):
+            if i_row%25000==0 and verbose:
+                print i_row
+            row = sim[i_row, :].toarray().ravel()
+            topk_idxs_values = np.argpartition(row, -(k))[-(k):]
+            #topk_idxs_values = np.argsort(row)[-(k):]
+            n = topk_idxs_values.shape[0]
+            # create incrementally the similarity matrix
+            data.extend(row[topk_idxs_values])
+            cols.extend(topk_idxs_values)
+            rows.extend(np.full(n, i_row))
+        s = sp.coo_matrix((data, (rows, cols)), shape=(m.shape[0], m.shape[0]), dtype=np.float32)
+        s.eliminate_zeros()
+        return s.tocsr()    
+    
+    
+    def knn_slow2(self,m,k=100,verbose=True):
+        data, rows, cols = [], [], []
+        m = m.tocsr()
+        m_t = m.copy().T.tocsc()
+        for i_row in range(m.shape[0]):
+            if i_row%10000==0 and verbose:
+                print i_row
+            row = (m[i_row, :]*m_t).toarray().ravel()
+            topk_idxs_values = np.argpartition(row, -(k))[-(k):]
+            n = topk_idxs_values.shape[0]
+            # create incrementally the similarity matrix
+            data.extend(row[topk_idxs_values])
+            cols.extend(topk_idxs_values)
+            rows.extend(np.full(n, i_row))
+        s = sp.coo_matrix((data, (rows, cols)), shape=(m.shape[0], m.shape[0]), dtype=np.float32)
+        s.eliminate_zeros()
+        return s.tocsr()
 
-        
-        
-        
-        
-        
-        
-        
-        
